@@ -20,7 +20,7 @@
 Welcome to ``pytq_crawlib`` Documentation
 ==============================================================================
 
-Documentation for ``pytq_crawlib``.
+Need not to know what it is!
 
 
 Quick Links
