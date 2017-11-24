@@ -1,0 +1,8 @@
+attrs_mate
+loggerFactory
+crawlib
+pytq
+pathlib_mate
+pymongo_mate
+mongoengine_mate
+sfm
