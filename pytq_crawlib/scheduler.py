@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-"""
-"""
-
 import six
 import time
 import attr
@@ -21,6 +18,7 @@ class InputData(AttrsClass):
     data = attr.ib()
     request_kwargs = attr.ib(default=attr.Factory(dict))
     get_html_kwargs = attr.ib(default=attr.Factory(dict))
+    parse_html_kwargs = attr.ib(default=attr.Factory(dict))
     ignore_cache = attr.ib(default=False)
     update_cache = attr.ib(default=True)
     expire = attr.ib(default=None)
@@ -115,6 +113,7 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
                              limit=None,
                              request_kwargs=None,
                              get_html_kwargs=None,
+                             parse_html_kwargs=None,
                              ignore_cache=False,
                              update_cache=True,
                              expire=None):
@@ -142,6 +141,8 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
             request_kwargs = {}
         if get_html_kwargs is None:
             get_html_kwargs = {}
+        if parse_html_kwargs is None:
+            parse_html_kwargs = {}
         if expire is None:
             expire = self.update_interval
 
@@ -151,6 +152,7 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
                 data=model_data,
                 request_kwargs=request_kwargs,
                 get_html_kwargs=get_html_kwargs,
+                parse_html_kwargs=parse_html_kwargs,
                 ignore_cache=ignore_cache,
                 update_cache=update_cache,
                 expire=expire,
@@ -213,7 +215,7 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
         out.html = html
 
         try:
-            parse_result = self.parse_html(html)
+            parse_result = self.parse_html(html, **input_data.parse_html_kwargs)
             out.data = parse_result
             msg = "Successfully extracted data!"
             self.info(msg, 1)
