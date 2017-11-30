@@ -35,15 +35,48 @@ class OutputData(AttrsClass):
 class BaseScheduler(MongoDBStatusFlagScheduler):
     """
 
-    :param use_browser: if True, you have to implement ``get_html(url)`` method.
+    """
+    model_klass = None
+    """
+    ``mongoengine_mate.ExtendedDocument`` object, represent the data model
+    you are crawling with.
     """
 
-    model_klass = None
     duplicate_flag = Status.S50_Finished.id
+    """
+    """
+
     update_interval = 24 * 3600
+    """
+    """
+
     cache = None
+    """
+    html disk cache, :class:`diskcache.Cache` object.
+    """
+
     use_requests = True
+    """
+    bool. if true, use ``requests`` library for crawler.
+    """
+
     chrome_drive_path = None
+    """
+    str. 
+    
+    if ``use_requests`` is False, then use selenium ChromeDriver for html
+    retrieve, a chrome driver executable file has to be given.
+    """
+
+    html_encoding = None
+    """
+    site wide html charset. if None, then decoder will automatically detect it.
+    """
+
+    decode_error_handling = "strict"
+    """
+    parameters in ``bytes.decode(encoding, errors=decode_error_handling)``.
+    """
 
     def __init__(self, logger=None):
         if self.duplicate_flag < 0: # pragma: no cover
@@ -187,7 +220,11 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
 
                 if 200 <= response.status_code < 300:
                     html = decoder.decode(
-                        response.content, url, encoding="utf-8")
+                        binary=response.content,
+                        url=url,
+                        encoding=self.html_encoding,
+                        errors=self.decode_error_handling,
+                    )
                 elif response.status_code == 403:
                     msg = ("You reach the limit, "
                            "program will sleep for 24 hours, "
