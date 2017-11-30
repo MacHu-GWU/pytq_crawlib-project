@@ -79,12 +79,14 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
     """
 
     def __init__(self, logger=None):
-        if self.duplicate_flag < 0: # pragma: no cover
+        if self.duplicate_flag < 0:  # pragma: no cover
             raise ValueError
-        if not isinstance(self.update_interval, six.integer_types): # pragma: no cover
+        if not isinstance(self.update_interval,
+                          six.integer_types):  # pragma: no cover
             raise TypeError
         if (self.cache is None) or (
-                not isinstance(self.cache, diskcache.Cache)): # pragma: no cover
+                not isinstance(self.cache,
+                               diskcache.Cache)):  # pragma: no cover
             raise TypeError
         collection = self.model_klass._get_collection()
         super(MongoDBStatusFlagScheduler, self). \
@@ -97,7 +99,7 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
         doc = input_data.data
         return doc._id
 
-    def build_url(self, doc): # pragma: no cover
+    def build_url(self, doc):  # pragma: no cover
         """
         :return: url.
         """
@@ -119,7 +121,7 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
         """
         raise self.selenium_spider.get_html(url)
 
-    def parse_html(self, html, **kwargs): # pragma: no cover
+    def parse_html(self, html, **kwargs):  # pragma: no cover
         """
         :return: :class:`crawlib.ParseResult`.
 
@@ -141,6 +143,36 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
                "having two attributes, ``.kwargs`` and ``.data``. ")
         raise NotImplementedError(msg)
 
+    def create_finished_filter(self):
+        """
+        A mongodb query for no-need-to-crawl documents.
+        """
+        now = datetime.utcnow()
+        n_sec_ago = now - timedelta(seconds=self.update_interval)
+        filters = {
+            self.status_key: {"$gte": self.duplicate_flag},
+            self.edit_at_key: {"$gte": n_sec_ago},
+        }
+        return filters
+
+    def create_unfinished_filter(self):
+        """
+        A mongodb query for need-to-crawl documents.
+        """
+        now = datetime.utcnow()
+        n_sec_ago = now - timedelta(seconds=self.update_interval)
+        filters = {
+            "$and": [
+                {
+                    "$or": [
+                        {self.status_key: {"$lt": self.duplicate_flag}},
+                        {self.edit_at_key: {"$lt": n_sec_ago}},
+                    ]
+                }
+            ]
+        }
+        return filters
+
     def get_input_data_queue(self,
                              filters=None,
                              limit=None,
@@ -151,15 +183,16 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
                              update_cache=True,
                              expire=None):
         """
+
         :param filters: mongodb query.
         :param limit: only returns first N documents.
         :param request_kwargs: optional parameters will be used in
             ``request(url, **request_kwargs)``.
         :param get_html_kwargs: optional
-        :param ignore_cache:
-        :param update_cache:
-        :param expire:
-        :return:
+        :param parse_html_kwargs: optional
+        :param ignore_cache: if True, then make http requests anyway.
+        :param update_cache: if False, then will not update cache when success.
+        :param expire: cache expire time in seconds.
         """
         if limit is 0:
             limit = None
