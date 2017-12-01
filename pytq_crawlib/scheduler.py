@@ -1,6 +1,33 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+"""
+**中文文档**
+
+此模块解决的什么问题？
+
+在网页爬虫项目中，如果我们对数据质量要求很高，我们会希望每一个待爬的页面都被正确精准的爬过
+至少一次。而在将来可能不定时的重新访问每个页面更新数据。
+
+在抓取网页的过程中，有可能出现以下几种情况：
+
+1. 网址出错，无法进行Http Request。
+2. 服务器出错，暂时 / 永久 的无法访问。
+3. 服务器拒绝访问，比如要求验证码等，反爬虫。
+4. 从网页抓取数据失败了。
+5. 网页的数据不完整。
+...
+
+等各种奇怪的情况，所以我们需要标记记录当前抓取的状态。
+
+解决方案：
+
+1. 使用MongoDB作为后端数据库。
+2. 使用DiskCache作为成功抓取的Html的缓存。
+3. 使用 ``crawlib.Status`` 对各种情况进行标注。
+4. 使用 ``crawlib.exc`` 对各种错误进行捕捉。
+"""
+
 import six
 import time
 import attr
@@ -96,6 +123,11 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
         self.col = self.collection
 
     def user_hash_input(self, input_data):
+        """
+        Get fingerprint of input_data.
+
+        fingerprint of `mongoengine.Document` usually is the ``_id`` field.
+        """
         doc = input_data.data
         return doc._id
 
@@ -173,8 +205,35 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
         }
         return filters
 
+    def query(self, filters=None, order_by=None, only=None, limit=None):
+        """
+        Execute mongoengine style query.
+
+        :param filters: mongodb query.
+        :param order_by: list of str, example: ``["-date",]``.
+        :param only: list of str, example: ``["title", "author.name"]``.
+        :param limit: only returns first N documents.
+        """
+        if filters is None:
+            filters = self.create_unfinished_filter()
+        query_set = self.model_klass.by_filter(filters)
+
+        if order_by is not None:
+            query_set = query_set.order_by(*order_by)
+
+        if only is not None:
+            query_set = query_set.only(*only)
+
+        if limit is 0:
+            limit = None
+
+        return query_set.limit(limit)
+
+
     def get_input_data_queue(self,
                              filters=None,
+                             order_by=None,
+                             only=None,
                              limit=None,
                              request_kwargs=None,
                              get_html_kwargs=None,
@@ -183,8 +242,11 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
                              update_cache=True,
                              expire=None):
         """
+        Get unfinished input data queue.
 
         :param filters: mongodb query.
+        :param order_by: list of str, example: ``["-date",]``.
+        :param only: list of str, example: ``["title", "author.name"]``.
         :param limit: only returns first N documents.
         :param request_kwargs: optional parameters will be used in
             ``request(url, **request_kwargs)``.
@@ -194,15 +256,7 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
         :param update_cache: if False, then will not update cache when success.
         :param expire: cache expire time in seconds.
         """
-        if limit is 0:
-            limit = None
-        if filters is None:
-            now = datetime.utcnow()
-            n_sec_ago = now - timedelta(seconds=self.update_interval)
-            filters = {
-                self.status_key: {"$lt": self.duplicate_flag},
-                self.edit_at_key: {"$lt": n_sec_ago},
-            }
+
         if request_kwargs is None:
             request_kwargs = {}
         if get_html_kwargs is None:
@@ -213,7 +267,8 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
             expire = self.update_interval
 
         input_data_queue = list()
-        for model_data in self.model_klass.by_filter(filters).limit(limit):
+        for model_data in self.query(
+            filters=filters, order_by=order_by, only=only, limit=limit):
             input_data = InputData(
                 data=model_data,
                 request_kwargs=request_kwargs,
