@@ -153,18 +153,18 @@ class SchedulerHouse(OneToOne):
         )
 
 
-def test_SchedulerUseBrowser():
-    s = SchedulerHouse()
-    s.log_off()
-    House.smart_insert([House(_id="h1"), House(_id="h2")])
-    input_data_queue = s.get_input_data_queue()
-    s.do(input_data_queue, ignore_error=False)
-
-    doc1, doc2 = list(s.col.find())
-    assert doc1["_id"] == "h1"
-    assert doc1["address"] == "123 Main St"
-    assert doc2["_id"] == "h2"
-    assert doc2["address"] == "123 Main St"
+# def test_SchedulerUseBrowser():
+#     s = SchedulerHouse()
+#     s.log_off()
+#     House.smart_insert([House(_id="h1"), House(_id="h2")])
+#     input_data_queue = s.get_input_data_queue()
+#     s.do(input_data_queue, ignore_error=False)
+#
+#     doc1, doc2 = list(s.col.find())
+#     assert doc1["_id"] == "h1"
+#     assert doc1["address"] == "123 Main St"
+#     assert doc2["_id"] == "h2"
+#     assert doc2["address"] == "123 Main St"
 
 
 if __name__ == "__main__":
