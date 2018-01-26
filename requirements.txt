@@ -1,8 +1,8 @@
 attrs_mate
-loggerFactory
-crawlib
-pytq
+loggerFactory>=0.0.4
+crawlib>=0.0.15
+pytq>=0.0.7
 pathlib_mate
 pymongo_mate
 mongoengine_mate
-sfm
+sfm>=0.0.15

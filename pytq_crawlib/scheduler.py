@@ -34,10 +34,14 @@ import attr
 import diskcache
 import mongoengine
 from datetime import datetime, timedelta
-from sfm.exception_mate import get_last_exc_info
+from sfm.exception_mate import ErrorTraceBackChain
 from attrs_mate import AttrsClass
 from pytq import MongoDBStatusFlagScheduler
 from crawlib import exc, Status, decoder, requests_spider, ChromeSpider
+
+
+def format_exc():
+    return ErrorTraceBackChain.get_last_exc_info().source_error.formatted
 
 
 @attr.s
@@ -62,6 +66,10 @@ class OutputData(AttrsClass):
 class BaseScheduler(MongoDBStatusFlagScheduler):
     """
 
+    - ``def build_url(self, doc, **kwargs)``
+    - ``def request(self, url, **kwargs)``
+    - ``def get_html(self, url, **kwargs)``
+    - ``def parse_html(self, html, **kwargs)``
     """
     model_klass = None
     """
@@ -71,10 +79,18 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
 
     duplicate_flag = Status.S50_Finished.id
     """
+    A integer value represent its a duplicate item. Any value greater or equal 
+    than this will be a duplicate item, otherwise its not.
+
+    You could define that when you initiate the scheduler.
     """
 
     update_interval = 24 * 3600
     """
+    If a item has been finished more than ``update_interval`` seconds, then
+    it should be re-do, and it is NOT a duplicate item.
+
+    You could define that when you initiate the scheduler.
     """
 
     cache = None
@@ -131,7 +147,7 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
         doc = input_data.data
         return doc._id
 
-    def build_url(self, doc):  # pragma: no cover
+    def build_url(self, doc, **kwargs):  # pragma: no cover
         """
         :return: url.
         """
@@ -229,7 +245,6 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
 
         return query_set.limit(limit)
 
-
     def get_input_data_queue(self,
                              filters=None,
                              order_by=None,
@@ -268,7 +283,7 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
 
         input_data_queue = list()
         for model_data in self.query(
-            filters=filters, order_by=order_by, only=only, limit=limit):
+                filters=filters, order_by=order_by, only=only, limit=limit):
             input_data = InputData(
                 data=model_data,
                 request_kwargs=request_kwargs,
@@ -280,6 +295,66 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
             )
             input_data_queue.append(input_data)
         return input_data_queue
+
+    # --- Response OK / Restrict Access / 404 checker ---
+    def is_status_ok(self, response, out, html):
+        """
+        Test if response is OK.
+        """
+        if 200 <= response.status_code < 300:
+            return True
+
+    def is_restrict_access(self, response, out, html):
+        """
+        Test if been banned, or encounter captcha.
+        """
+        if response.status_code == 403:
+            msg = ("You reach the limit, "
+                   "program will sleep for 1 hours, "
+                   "please wait for a day to continue...")
+            self.info(msg, 1)
+            out.status = Status.S20_WrongPage.id
+            time.sleep(24 * 3600)
+            return True
+
+    def is_404_error(self, response, out, html):
+        """
+        Test if it is 404 page.
+        """
+        if response.status_code == 404:  # page not exists
+            msg = "page doesn't exists on server!"
+            self.info(msg, 1)
+            out.status = Status.S60_ServerSideError.id
+            return True
+
+    def identify_should_proceed(self, response, out, **kwargs):
+        """
+        Response OK / Restrict Access / 404 checker, decide if we should
+        proceed to call `parse_html(html)` function.
+        """
+        # Get html in string first
+        try:
+            html = decoder.decode(
+                binary=response.content,
+                url=response.url,
+                encoding=self.html_encoding,
+                errors=self.decode_error_handling,
+            )
+            out.html = html
+        except:
+            out.html = None
+
+        if self.is_404_error(response, out, out.html):
+            return False
+        elif self.is_restrict_access(response, out, out.html):
+            return False
+        elif self.is_status_ok(response, out, out.html):
+            return True
+        else:
+            msg = ("Unknown page status!")
+            self.info(msg, 1)
+            out.status = Status.S10_HttpError
+            return False
 
     def user_process(self, input_data):
         out = OutputData()
@@ -301,46 +376,30 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
                 try:
                     response = self.request(url, **input_data.request_kwargs)
                 except:
-                    msg = "Failed to make http request: %s" % get_last_exc_info()
+                    msg = "Failed to make http request: %s" % format_exc()
                     self.info(msg, 1)
                     out.status = Status.S10_HttpError.id
                     return out
 
-                if 200 <= response.status_code < 300:
-                    html = decoder.decode(
-                        binary=response.content,
-                        url=url,
-                        encoding=self.html_encoding,
-                        errors=self.decode_error_handling,
-                    )
-                elif response.status_code == 403:
-                    msg = ("You reach the limit, "
-                           "program will sleep for 24 hours, "
-                           "please wait for a day to continue...")
-                    self.info(msg, 1)
-                    out.status = Status.S20_WrongPage.id
-                    time.sleep(24 * 3600)
+                # if it is not OK, we should not proceed
+                # we should just record status and return
+                continue_flag = self.identify_should_proceed(response, out)
+                if continue_flag is False:
                     return out
-                elif response.status_code == 404:  # page not exists
-                    msg = "page doesn't exists on server!"
-                    self.info(msg, 1)
-                    out.status = Status.S60_ServerSideError.id
-                    return out
-
             else:
                 try:
                     html = self.chrome_spider.get_html(
                         url, **input_data.get_html_kwargs)
+                    out.html = html
                 except:
-                    msg = "Failed to make http request: %s" % get_last_exc_info()
+                    msg = "Failed to make http request: %s" % format_exc()
                     self.info(msg, 1)
                     out.status = Status.S10_HttpError.id
                     return out
 
-        out.html = html
-
         try:
-            parse_result = self.parse_html(html, **input_data.parse_html_kwargs)
+            parse_result = self.parse_html(out.html,
+                                           **input_data.parse_html_kwargs)
             out.data = parse_result
             msg = "Successfully extracted data!"
             self.info(msg, 1)
@@ -350,16 +409,22 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
                 out.status = Status.S50_Finished.id
         except exc.ServerSideError:
             out.html = html
-            msg = "Server side error!" % get_last_exc_info()
+            msg = "Server side error!" % format_exc()
             self.info(msg, 1)
             out.status = Status.S60_ServerSideError.id
         except:
-            msg = "Failed to parse html: %s" % get_last_exc_info()
+            msg = "Failed to parse html: %s" % format_exc()
             self.info(msg, 1)
             out.status = Status.S30_ParseError.id
         return out
 
     def to_dict_only_not_none_field(self, model_data):
+        """
+        Transform mongoengine.Document to dictionary, ignore None value fields.
+
+        :param model_data: `mongoengine.Document` object.
+        :return: dict.
+        """
         d = model_data.to_dict()
         d.pop("_id")
         d.pop(self.status_key)
@@ -398,8 +463,63 @@ class BaseScheduler(MongoDBStatusFlagScheduler):
 
 
 class OneToMany(BaseScheduler):
+    """
+    For example, there's a USA, state, city, zipcode website. On state info
+    webpage, it has state info and list of city. In this case, we need to visit
+    52 state and get all cities. The State is the parent `model_klass`, and the
+    `City` is the `child_klass`. They are One - to - Many relationship.
+
+    :param model_klass: mongoengine.Document (Required)
+        ``mongoengine_mate.ExtendedDocument`` object, represent the data model
+        you are crawling with.
+
+    :param duplicate_flag: int (Optional)
+        A integer value represent its a duplicate item. Any value greater or equal
+        than this will be a duplicate item, otherwise its not.
+        You could define that when you initiate the scheduler.
+
+    :param update_interval: int (Optional)
+        If a item has been finished more than ``update_interval`` seconds, then
+        it should be re-do, and it is NOT a duplicate item.
+        You could define that when you initiate the scheduler.
+
+    :param cache: `discache.Cache` (Required)
+        html disk cache, :class:`diskcache.Cache` object.
+
+    :param use_requests: bool. default True (Optional)
+        if true, use ``requests`` library for crawler.
+
+    :param chrome_drive_path: str, default None (Optional)
+        if ``use_requests`` is False, then use selenium ChromeDriver for html
+        retrieve, a chrome driver executable file has to be given.
+
+    :param html_encoding: str, default None (Optional)
+        site wide html charset. if None, then decoder will automatically detect it.
+
+    :param decode_error_handling: str, default "strict" (Optional)
+        parameters in ``bytes.decode(encoding, errors=decode_error_handling)``.
+
+    :param child_klass: str, default None (Required)
+        Child model class is the data model associated with the parent model.
+
+        For example: a USA state information webpage could have list of city.
+        in this case, State is `model_klass`, City is `child_class`.
+
+    :param n_child_key: str, default None (Required)
+        A field name to store how many child exists in this page.
+    """
     child_klass = None
+    """
+    Child model class is the data model associated with the parent model.
+    
+    For example: a USA state information webpage could have list of city. 
+    in this case, State is `model_klass`, City is `child_class`.
+    """
+
     n_child_key = None
+    """
+    A field name to store how many child exists in this page.
+    """
 
     def __init__(self, logger=None):
         super(OneToMany, self).__init__(logger=logger)
@@ -438,6 +558,38 @@ class OneToMany(BaseScheduler):
 
 
 class OneToOne(BaseScheduler):
+    """
+    :param model_klass: mongoengine.Document (Required)
+        ``mongoengine_mate.ExtendedDocument`` object, represent the data model
+        you are crawling with.
+
+    :param duplicate_flag: int (Optional)
+        A integer value represent its a duplicate item. Any value greater or equal
+        than this will be a duplicate item, otherwise its not.
+        You could define that when you initiate the scheduler.
+
+    :param update_interval: int (Optional)
+        If a item has been finished more than ``update_interval`` seconds, then
+        it should be re-do, and it is NOT a duplicate item.
+        You could define that when you initiate the scheduler.
+
+    :param cache: `discache.Cache` (Required)
+        html disk cache, :class:`diskcache.Cache` object.
+
+    :param use_requests: bool. default True (Optional)
+        if true, use ``requests`` library for crawler.
+
+    :param chrome_drive_path: str, default None (Optional)
+        if ``use_requests`` is False, then use selenium ChromeDriver for html
+        retrieve, a chrome driver executable file has to be given.
+
+    :param html_encoding: str, default None (Optional)
+        site wide html charset. if None, then decoder will automatically detect it.
+
+    :param decode_error_handling: str, default "strict" (Optional)
+        parameters in ``bytes.decode(encoding, errors=decode_error_handling)``.
+    """
+
     def user_post_process(self, task):
         input_data = task.input_data
         output_data = task.output_data

@@ -5,7 +5,7 @@
 Sanhe's private crawler tool.
 """
 
-__version__ = "0.0.4"
+__version__ = "0.0.5"
 __short_description__ = ""
 __license__ = "MIT"
 __author__ = "Sanhe Hu"
@@ -16,6 +16,6 @@ __maintainer_email__ = "husanhe@gmail.com"
 __github_username__ = "MacHu-GWU"
 
 try:
-    from .scheduler import OneToOne, OneToMany
+    from .scheduler import BaseScheduler, OneToOne, OneToMany
 except:  # pragma: no cover
     pass
