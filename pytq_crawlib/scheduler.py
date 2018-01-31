@@ -547,12 +547,12 @@ class OneToMany(BaseScheduler):
                     output_data.url, output_data.html,
                     expire=input_data.expire,
                 )
-            parse_result = output_data.data
-            n_child = len(parse_result.data)
-            upd[self.n_child_key] = n_child
-
-            if n_child:
-                self.child_klass.smart_insert(parse_result.data)
+            if output_data.data:
+                parse_result = output_data.data
+                n_child = len(parse_result.data)
+                upd[self.n_child_key] = n_child
+                if n_child:
+                    self.child_klass.smart_insert(parse_result.data)
 
         self.col.update({"_id": task.id}, {"$set": upd})
 
@@ -598,7 +598,6 @@ class OneToOne(BaseScheduler):
             self.status_key: output_data.status,
             self.edit_at_key: datetime.utcnow(),
         }
-
         if output_data.status >= self.duplicate_flag:
             if input_data.update_cache:
                 self.cache.set(
@@ -606,8 +605,10 @@ class OneToOne(BaseScheduler):
                     expire=input_data.expire,
                 )
 
-            parse_result = output_data.data
-            model_data = parse_result.data
-            upd.update(self.to_dict_only_not_none_field(model_data))
+            if output_data.data:
+                parse_result = output_data.data
+                if parse_result.data:
+                    model_data = parse_result.data
+                    upd.update(self.to_dict_only_not_none_field(model_data))
 
         self.col.update({"_id": task.id}, {"$set": upd})
