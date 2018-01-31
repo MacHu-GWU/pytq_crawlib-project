@@ -5,7 +5,7 @@
 Sanhe's private crawler tool.
 """
 
-__version__ = "0.0.5"
+__version__ = "0.0.6"
 __short_description__ = ""
 __license__ = "MIT"
 __author__ = "Sanhe Hu"
